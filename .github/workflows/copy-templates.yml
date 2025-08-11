@@ -24,4 +24,3 @@ jobs:
           ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
           TEMPLATE_NAMES: ${{ secrets.TEMPLATE_NAMES }}
         run: python main.py
-
