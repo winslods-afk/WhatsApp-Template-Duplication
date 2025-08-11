@@ -4,7 +4,7 @@ import os
 SRC_ACCOUNT_ID = os.environ["SRC_ACCOUNT_ID"]
 DST_ACCOUNT_ID = os.environ["DST_ACCOUNT_ID"]
 ACCESS_TOKEN = os.environ["ACCESS_TOKEN"]
-TEMPLATE_NAMES = os.environ["TEMPLATE_NAMES"].split(",")
+TEMPLATE_NAMES = [name.strip() for name in os.environ["TEMPLATE_NAMES"].split(",")]
 
 API_URL = "https://graph.facebook.com/v20.0"
 
@@ -48,7 +48,7 @@ def main():
     print("Получаем шаблоны из источника...")
     templates = get_templates(SRC_ACCOUNT_ID)
 
-    selected = [tpl for tpl in templates if tpl["name"] in TEMPLATE_NAMES]
+   selected = [tpl for tpl in templates if tpl["name"] in TEMPLATE_NAMES]
 
     if not selected:
         print("⚠️ Нет шаблонов с указанными именами.")
