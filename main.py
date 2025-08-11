@@ -1,18 +1,15 @@
 import requests
 import os
 
-# === Конфигурация ===
-SRC_ACCOUNT_ID = os.environ["SRC_ACCOUNT_ID"]  # ID аккаунта-источника
-DST_ACCOUNT_ID = os.environ["DST_ACCOUNT_ID"]  # ID аккаунта-приёмника
-ACCESS_TOKEN = os.environ["ACCESS_TOKEN"]      # Твой API токен
+SRC_ACCOUNT_ID = os.environ["SRC_ACCOUNT_ID"]
+DST_ACCOUNT_ID = os.environ["DST_ACCOUNT_ID"]
+ACCESS_TOKEN = os.environ["ACCESS_TOKEN"]
 
-# Читаем список имён шаблонов и убираем лишние пробелы
 TEMPLATE_NAMES = [name.strip() for name in os.environ["TEMPLATE_NAMES"].split(",")]
 
 API_URL = "https://graph.facebook.com/v20.0"
 
 
-# Получить список шаблонов аккаунта
 def get_templates(account_id):
     url = f"{API_URL}/{account_id}/message_templates"
     headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
@@ -33,17 +30,29 @@ def get_templates(account_id):
     return templates
 
 
-# Создать шаблон в другом аккаунте
 def create_template(account_id, template):
     url = f"{API_URL}/{account_id}/message_templates"
     headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
 
+    # Копируем все компоненты, включая HEADER с картинкой
     payload = {
         "name": template["name"],
         "category": template["category"],
         "language": template["language"],
-        "components": template["components"]
+        "components": []
     }
+
+    for comp in template["components"]:
+        new_comp = {
+            "type": comp["type"]
+        }
+        if "text" in comp:
+            new_comp["text"] = comp["text"]
+        if "format" in comp:
+            new_comp["format"] = comp["format"]
+        if "example" in comp:
+            new_comp["example"] = comp["example"]  # Сюда попадёт header_handle с URL картинки
+        payload["components"].append(new_comp)
 
     resp = requests.post(url, headers=headers, json=payload)
     if resp.status_code != 200:
@@ -60,14 +69,13 @@ def main():
     dst_templates = get_templates(DST_ACCOUNT_ID)
     dst_names = [tpl["name"] for tpl in dst_templates]
 
-    # Фильтруем только полные совпадения и которых нет в целевом аккаунте
     selected = [
         tpl for tpl in src_templates
         if tpl["name"] in TEMPLATE_NAMES and tpl["name"] not in dst_names
     ]
 
     if not selected:
-        print("⚠️ Нет шаблонов для копирования (или уже все есть в целевом аккаунте).")
+        print("⚠️ Нет шаблонов для копирования.")
         return
 
     print(f"Будет скопировано {len(selected)} шаблонов: {[t['name'] for t in selected]}")
