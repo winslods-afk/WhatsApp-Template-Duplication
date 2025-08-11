@@ -1,7 +1,7 @@
 name: Copy Selected WhatsApp Templates
 
 on:
-  workflow_dispatch: # запуск вручную
+  workflow_dispatch: {} # запуск вручную
 
 jobs:
   copy-templates:
