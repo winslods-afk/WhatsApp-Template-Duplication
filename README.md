@@ -1,1 +1,1 @@
-# endpoint-runner
+# WhatsApp Template Duplication 
