@@ -1,1 +1,27 @@
+name: Copy Selected WhatsApp Templates
+
+on:
+  workflow_dispatch: # запуск вручную
+
+jobs:
+  copy-templates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run copy script
+        env:
+          SRC_ACCOUNT_ID: ${{ secrets.SRC_ACCOUNT_ID }}
+          DST_ACCOUNT_ID: ${{ secrets.DST_ACCOUNT_ID }}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+          TEMPLATE_NAMES: ${{ secrets.TEMPLATE_NAMES }}
+        run: python main.py
 
