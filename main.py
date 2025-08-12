@@ -1,46 +1,44 @@
 import requests
-import os
-from urllib.parse import urlparse
 import mimetypes
+import os
 import csv
+from urllib.parse import urlparse
 
-SRC_ACCOUNT_ID = os.environ["SRC_ACCOUNT_ID"]
-DST_ACCOUNT_ID = os.environ["DST_ACCOUNT_ID"]
-ACCESS_TOKEN = os.environ["ACCESS_TOKEN"]
-
-TEMPLATE_NAMES = [name.strip() for name in os.environ["TEMPLATE_NAMES"].split(",")]
+# Настройки
+ACCESS_TOKEN = "ВАШ_ACCESS_TOKEN"
 API_URL = "https://graph.facebook.com/v20.0"
-LOG_FILE = "templates_migration_log.csv"
+SOURCE_WABA = "SOURCE_WHATSAPP_BUSINESS_ACCOUNT_ID"
+TARGET_WABA = "TARGET_WHATSAPP_BUSINESS_ACCOUNT_ID"
+TEMPLATE_NAME_TO_COPY = "test_roman1"  # Полное совпадение имени
+
+# Путь для CSV лога
+LOG_FILE = "template_copy_log.csv"
 
 
-def get_templates(account_id):
-    url = f"{API_URL}/{account_id}/message_templates"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
-    params = {"limit": 100}
-    templates = []
-
-    while True:
-        resp = requests.get(url, headers=headers, params=params)
-        if resp.status_code != 200:
-            raise Exception(f"Ошибка при получении шаблонов ({account_id}): {resp.text}")
-        data = resp.json()
-        templates.extend(data.get("data", []))
-        if "paging" in data and "next" in data["paging"]:
-            url = data["paging"]["next"]
-            params = {}
-        else:
-            break
-    return templates
+def log_result(template_name, status, components_info, media_ids, buttons_info):
+    """Сохраняет информацию о копировании в CSV"""
+    file_exists = os.path.isfile(LOG_FILE)
+    with open(LOG_FILE, mode="a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["Template Name", "Status", "Components", "Media IDs", "Buttons"])
+        writer.writerow([
+            template_name,
+            status,
+            ", ".join(components_info),
+            ", ".join(media_ids),
+            ", ".join(buttons_info)
+        ])
 
 
-def upload_media(account_id, url):
-    """Скачивает файл и загружает в целевой WABA, возвращает media_id"""
-    print(f"⬇️ Скачиваем медиа: {url}")
-    file_resp = requests.get(url)
+def upload_media(account_id, media_url):
+    """Скачивает и загружает медиа в целевой WABA, возвращает media_id"""
+    print(f"⬇️ Скачиваем медиа: {media_url}")
+    file_resp = requests.get(media_url, stream=True)
     if file_resp.status_code != 200:
-        raise Exception(f"Не удалось скачать медиа: {url}")
+        raise Exception(f"Не удалось скачать медиа: {media_url}")
 
-    filename = os.path.basename(urlparse(url).path)
+    filename = os.path.basename(urlparse(media_url).path)
     mime_type, _ = mimetypes.guess_type(filename)
     if not mime_type:
         mime_type = "application/octet-stream"
@@ -64,7 +62,7 @@ def upload_media(account_id, url):
     return media_id
 
 
-def process_header(comp, account_id, template_name):
+def process_header(comp, account_id, template_name, media_ids):
     """Обрабатывает HEADER в зависимости от формата"""
     new_comp = {"type": comp["type"], "format": comp.get("format")}
     header_format = comp.get("format")
@@ -79,8 +77,8 @@ def process_header(comp, account_id, template_name):
         try:
             media_url = example["header_handle"][0]
             media_id = upload_media(account_id, media_url)
+            media_ids.append(media_id)
             new_comp["example"] = {"header_handle": [media_id]}
-            return new_comp, media_id
         except Exception as e:
             print(f"⚠️ Не удалось обработать {header_format} для {template_name}: {e}")
 
@@ -88,92 +86,100 @@ def process_header(comp, account_id, template_name):
         if example:
             new_comp["example"] = example
 
-    return new_comp, None
+    return new_comp
 
 
-def process_buttons(comp):
-    """Обрабатывает кнопки любого типа"""
+def process_buttons(buttons, buttons_info):
+    """Приводит кнопки к формату API v20"""
     new_buttons = []
-    for btn in comp.get("buttons", []):
+    for btn in buttons:
         btn_type = btn.get("type")
-        new_btn = {
-            "type": btn_type,
-            "text": btn.get("text")
-        }
-        if btn_type == "URL":
-            new_btn["url"] = btn.get("url")
+        text = btn.get("text", "")
+        buttons_info.append(f"{btn_type}:{text}")
+
+        if btn_type == "QUICK_REPLY":
+            new_buttons.append({"type": "QUICK_REPLY", "text": text})
+
+        elif btn_type == "URL":
+            new_buttons.append({
+                "type": "URL",
+                "text": text,
+                "url": btn.get("url", "")
+            })
+
         elif btn_type == "PHONE_NUMBER":
-            new_btn["phone_number"] = btn.get("phone_number")
-        elif btn_type == "QUICK_REPLY":
-            new_btn["payload"] = btn.get("payload")
-        new_buttons.append(new_btn)
-    return {"type": "BUTTONS", "buttons": new_buttons}
+            new_buttons.append({
+                "type": "PHONE_NUMBER",
+                "text": text,
+                "phone_number": btn.get("phone_number", "")
+            })
+
+        else:
+            print(f"⚠️ Неизвестный тип кнопки: {btn_type}")
+
+    return new_buttons
 
 
-def create_template(account_id, template, csv_writer):
+def get_templates(account_id):
+    """Получает список шаблонов"""
     url = f"{API_URL}/{account_id}/message_templates"
     headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        raise Exception(f"Ошибка получения шаблонов: {resp.text}")
+    return resp.json().get("data", [])
 
-    payload = {
-        "name": template["name"],
-        "category": template["category"],
-        "language": template["language"],
-        "components": []
+
+def create_template(account_id, template):
+    """Создаёт шаблон в целевом аккаунте"""
+    url = f"{API_URL}/{account_id}/message_templates"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    resp = requests.post(url, headers=headers, json=template)
+    return resp
+
+
+# ==== Основной код ====
+print("Получаем шаблоны из источника...")
+source_templates = get_templates(SOURCE_WABA)
+
+# Ищем точное совпадение по имени
+template_to_copy = next((t for t in source_templates if t["name"] == TEMPLATE_NAME_TO_COPY), None)
+if not template_to_copy:
+    print(f"❌ Шаблон {TEMPLATE_NAME_TO_COPY} не найден в источнике")
+else:
+    print(f"Найден шаблон: {template_to_copy['name']}")
+
+    components_info = []
+    media_ids = []
+    buttons_info = []
+
+    new_components = []
+    for comp in template_to_copy.get("components", []):
+        components_info.append(comp["type"])
+        if comp["type"] == "HEADER":
+            new_components.append(process_header(comp, TARGET_WABA, template_to_copy["name"], media_ids))
+        elif comp["type"] == "BUTTONS":
+            new_components.append({
+                "type": "BUTTONS",
+                "buttons": process_buttons(comp.get("buttons", []), buttons_info)
+            })
+        else:
+            new_components.append(comp)
+
+    new_template = {
+        "name": template_to_copy["name"],
+        "category": template_to_copy.get("category", "UTILITY"),
+        "components": new_components,
+        "language": template_to_copy.get("language", "en")
     }
 
-    new_media_id = None
-
-    for comp in template["components"]:
-        if comp["type"] == "HEADER":
-            new_comp, media_id = process_header(comp, account_id, template["name"])
-            if media_id:
-                new_media_id = media_id
-        elif comp["type"] == "BODY":
-            new_comp = {"type": "BODY", "text": comp["text"]}
-        elif comp["type"] == "FOOTER":
-            new_comp = {"type": "FOOTER", "text": comp["text"]}
-        elif comp["type"] == "BUTTONS":
-            new_comp = process_buttons(comp)
-        else:
-            new_comp = comp
-
-        payload["components"].append(new_comp)
-
-    resp = requests.post(url, headers=headers, json=payload)
-    if resp.status_code != 200:
-        print(f"❌ Ошибка создания {template['name']}: {resp.text}")
-        csv_writer.writerow([template["name"], template["language"], template["category"], "ERROR", new_media_id, resp.text])
+    resp = create_template(TARGET_WABA, new_template)
+    if resp.status_code == 200:
+        print(f"✅ Шаблон {template_to_copy['name']} создан")
+        log_result(template_to_copy["name"], "SUCCESS", components_info, media_ids, buttons_info)
     else:
-        print(f"✅ Шаблон {template['name']} создан")
-        csv_writer.writerow([template["name"], template["language"], template["category"], "OK", new_media_id, ""])
-
-
-def main():
-    print("Получаем шаблоны из источника...")
-    src_templates = get_templates(SRC_ACCOUNT_ID)
-
-    print("Получаем шаблоны из целевого аккаунта...")
-    dst_templates = get_templates(DST_ACCOUNT_ID)
-    dst_names = [tpl["name"] for tpl in dst_templates]
-
-    selected = [
-        tpl for tpl in src_templates
-        if tpl["name"] in TEMPLATE_NAMES and tpl["name"] not in dst_names
-    ]
-
-    if not selected:
-        print("⚠️ Нет шаблонов для копирования.")
-        return
-
-    print(f"Будет скопировано {len(selected)} шаблонов: {[t['name'] for t in selected]}")
-
-    with open(LOG_FILE, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Template Name", "Language", "Category", "Status", "New Media ID", "Error Message"])
-
-        for tpl in selected:
-            create_template(DST_ACCOUNT_ID, tpl, writer)
-
-
-if __name__ == "__main__":
-    main()
+        print(f"❌ Ошибка создания {template_to_copy['name']}: {resp.text}")
+        log_result(template_to_copy["name"], "FAIL", components_info, media_ids, buttons_info)
